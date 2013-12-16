@@ -1,0 +1,22 @@
+<?php
+
+/**
+ * @file
+ * Webform module tests.
+ */
+
+class WebformComponentEntitiesTestCase extends DrupalWebTestCase {
+  protected $privileged_user;
+ 
+  public static function getInfo() {
+    // Note: getInfo() strings are not translated with t().
+    return array(
+      'name' => 'Webform Component Entities',
+      'description' => 'Ensure that the webform_component content type provided functions properly.',
+      'group' => 'Webform Component Entities',
+    );
+  }
+  public function setUp() {
+     
+  }
+}
