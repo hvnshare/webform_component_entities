@@ -1,0 +1,13 @@
+name = Webform component
+description = Reused webform
+package = HVN
+version = VERSION
+core = 7.x
+configure = admin/config/content/webform-entity
+dependencies[] = webform
+dependencies[] = views
+dependencies[] = views_bulk_operations
+version = "1.0"
+project = "Webform component"
+datestamp = "1309397522"
+

@@ -1,0 +1,211 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the webform_component_entities module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function webform_component_entities_schema() {
+  $schema = array();
+  $schema['webform_component_entity '] = array(
+    'description' => 'Stores information about components for webform nodes.',
+    'fields' => array(
+      'nid' => array(
+        'description' => 'The node identifier of a webform entity.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      
+      'form_key' => array(
+        'description' => 'When the form is displayed and processed, this key can be used to reference the results.',
+        'type' => 'varchar',
+        'length' => 128,
+      ),
+      'name' => array(
+        'description' => 'The label for this component.',
+        'type' => 'varchar',
+        'length' => 255,
+      ),
+      'type' => array(
+        'description' => 'The field type of this component (textfield, select, hidden, etc.).',
+        'type' => 'varchar',
+        'length' => 16,
+      ),
+      'value' => array(
+        'description' => 'The default value of the component when displayed to the end-user.',
+        'type' => 'text',
+        'not null' => TRUE,
+      ),
+      'extra' => array(
+        'description' => 'Additional information unique to the display or processing of this component.',
+        'type' => 'text',
+        'not null' => TRUE,
+      ),
+      'mandatory' => array(
+        'description' => 'Boolean flag for if this component is required.',
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'weight' => array(
+        'description' => 'Determines the position of this component in the form.',
+        'type' => 'int',
+        'size' => 'small',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('nid'),
+  );
+  return $schema;
+}
+
+/**
+ * Implements hook_install().
+ */
+function webform_component_entities_install() {
+  module_load_include('inc', 'node', 'content_types');
+ 
+  // Optionally create the default webform_component type.
+  if (variable_get('webform_install_create_content_type', TRUE)) {
+    $webform_entity = array(
+      'type' => 'webform_component',
+      'name' => st('Webform Component'),
+      'base' => 'node_content',
+      'description' => st('Create a webform component entity for re-used in webform component form.'),
+      'custom' => TRUE,
+      'modified' => TRUE,
+      'locked' => FALSE,
+    );
+    $webform_entity = node_type_set_defaults($webform_entity);
+    node_type_save($webform_entity);
+    node_add_body_field($webform_entity);
+    // Create the component vocabulary if it does not exist.
+    //$vocabulary = taxonomy_vocabulary_load(variable_get('component_tags_vocabulary', 0));
+    $vocabulary = taxonomy_vocabulary_machine_name_load('component_tags');
+    if ($vocabulary) {
+      variable_set('component_tags_vocabulary', $vocabulary->vid);
+    }
+    if (!$vocabulary) {
+      $edit = array(
+        'name' => t('Component Tags'),
+        'machine_name' => 'component_tags',
+        'description' => t('Component Tags vocabulary'),
+        'hierarchy' => 1,
+        'module' => 'webform_component_entities',
+        'weight' => -10,
+      );
+      $vocabulary = (object) $edit;
+      taxonomy_vocabulary_save($vocabulary);
+      variable_set('component_tags_vocabulary', $vocabulary->vid);
+    } 
+    
+    // Create the 'field_component_tags' field if it doesn't already exist.
+    if (!field_info_field('component_tags')) {
+      $field = array(
+        'field_name' => 'component_tags',
+        'type' => 'taxonomy_term_reference',
+        'settings' => array(
+          'allowed_values' => array(
+            array(
+              'vocabulary' => $vocabulary->machine_name,
+              'parent' => 0,
+            ),
+          ),
+        ),
+        'cardinality' => -1,
+      );
+      field_create_field($field);
+    }
+    // Create the instance on the bundle.
+    $instance = array(
+      'field_name' => 'component_tags',
+      'entity_type' => 'node',
+      'label' => $vocabulary->name,
+      'bundle' => 'webform_component',
+      'required' => FALSE,
+      'widget' =>  array(
+        'type' => 'taxonomy_autocomplete',
+        'module' => 'taxonomy',
+        'settings' => array(
+          'size' => 60,
+          'autocomplete_path' => 'taxonomy/autocomplete',
+        ),
+      ), 
+      'cardinality' => -1,
+      
+      'display' => array(
+        'default' => array(
+          'type' => 'taxonomy_term_reference_link',
+         'weight' => 10,
+        ),
+        'teaser' => array(
+          'type' => 'taxonomy_term_reference_link',
+         'weight' => 10,
+        ),
+      ),
+    );
+    field_create_instance($instance); 
+       
+    // Create the 'component_type' field if it doesn't already exist.   
+    if (!field_info_field('component_type')) {
+    
+      $field = array(                                       
+        'field_name' => 'component_type',
+        'type' => 'text',
+      );
+      $field = field_create_field($field);
+    }
+    // Create the instance on the bundle.
+    $instance = array(
+      'field_name' => 'component_type',     
+      'entity_type' => 'node',
+      'bundle' => 'webform_component',
+      'label' => 'Component type',
+      'required' => TRUE,
+      'settings' => array(
+        'text_processing' => 0,
+      ),
+      'widget' => array('type' => 'text_textfield'),  
+      'weight' => 11,                                 
+      'display' => array(
+        'teaser' => array(                          
+          'label' => 'inline',                        
+          'type' => 'text_plain',                     
+        ),
+        'default' => array(
+          'label' => 'inline',
+          'type' => 'text_default',
+        ),
+      ),
+    );
+   
+    $instance = field_create_instance($instance);   
+  }
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function webform_component_entities_uninstall() {
+  variable_del('component_tags_vocabulary'); 
+  variable_del('webform_install_create_content_type');
+  //delete content type & nodes
+  $result = db_select('node', 'n')
+          ->fields('n', array('nid'))
+          ->condition('type', 'webform_component' )
+          ->execute();
+
+  foreach ($result as $record) {
+      node_delete($record->nid);
+  }
+  node_type_delete('webform_component');
+  field_delete_field('component_tags');
+  field_delete_field('component_type');
+}

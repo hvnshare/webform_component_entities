@@ -1,0 +1,328 @@
+<?php
+// $Id: webform_component_entities.module 668 2013-12-12 09:48:13Z viet.hoangquoc@harveynash.vn $
+ 
+/**
+ * Implements hook_menu().
+ */
+function webform_component_entities_menu() {
+	$items = array ();
+	
+	$items ['admin/config/content/webform-entity'] = array (
+    'title' =>   'Webform Entity Setting' ,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('webform_component_entities_settings'),
+    'access arguments' => array('administer site configuration'), 
+    'description' => 'Global configuration of webform entity functionality',
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'webform_component_entities.admin.inc',
+	);
+  return $items;
+}  
+ 
+
+ 
+/**
+ * Implements hook_form_alter().
+ */
+function webform_component_entities_form_alter(&$form, $form_state, $form_id) {
+  
+  //alter form edit component of webform
+  if ($form_id == 'webform_component_edit_form' && arg(4) == 'new') {
+    $vocabulary = taxonomy_vocabulary_load(variable_get('component_tags_vocabulary', 0));
+    $form['library'] = array(
+      '#title' => t('Library'),
+      '#type' => 'fieldset',
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+      '#attributes' => array('class' => array('collapsible', 'collapsed')),
+      '#weight' => 21,
+    );
+    $form['library']['save_for_feature_use'] = array(
+      '#title' => t('Saving for future use'),
+      '#type' => 'checkbox',
+    );
+    if ($vocabulary) {
+      $form['library']['save_for_feature_use_tag'] = array(
+        '#title' => t('Tags'),
+        '#type' => 'textfield',
+        '#states' => array(
+          // Only show this field when the 'save_for_feature_use_tag' checkbox is enabled.
+          'visible' => array(
+            ':input[name="library[save_for_feature_use]"]' => array('checked' => TRUE),
+          ),
+        ),
+        '#autocomplete_path' => 'taxonomy/autocomplete/' . $vocabulary->machine_name,
+      );
+      $form['#submit'][] = 'webform_component_entities_form_submit';
+    }
+  } 
+  //alter form list components of a webform node
+  else if ($form_id == 'webform_components_form') {
+    if (variable_get('webform_entity_view_path', 'component-library') != '') {
+      $form['add_from_library'] = array(
+        '#type' => 'submit',
+        '#value' => t('Add from library'),
+        '#weight' => 45,
+        '#submit' => array('webform_component_entities_add_from_library_submit'),
+      );
+    }
+ 
+  }
+}
+
+/**
+ * handler for submit add a component
+ */
+function webform_component_entities_form_submit($form, &$form_state) {
+  
+  if ($form_state['values']['library']['save_for_feature_use']) {
+    $tags = $form_state['values']['library']['save_for_feature_use_tag'];
+    //2. Save data of component
+    $component = webform_component_entities_load_webform_component( $form_state['values']['nid'], $form_state['values']['cid']);
+    webform_component_entities_create_entity_node($tags, $component);
+  }
+}
+
+
+/**
+ * create new component entity node
+ * @param string $tags  
+ * @param object $component component object from webform
+ * @return  
+ */
+function webform_component_entities_create_entity_node($tags, $component) {
+
+  if (!$component) return false;
+  global $user;
+  
+  $vid = variable_get('component_tags_vocabulary', 0);
+  $tagIds = array();
+  $tags_typed = drupal_explode_tags($tags);
+  
+  if ($tags_typed) {
+    foreach ($tags_typed as $typed_term) {
+    
+      if ($terms = taxonomy_term_load_multiple(array(), array('name' => trim($typed_term), 'vid' => $vid))) {
+        $term = array_pop($terms);
+        $tagIds[] = $term->tid;
+      } else {
+      
+        $term = new stdClass();
+        $term->name = $typed_term;
+        $term->vid = $vid;
+        taxonomy_term_save($term);
+        $tagIds[] = $term->tid;
+      }
+    }   
+  }
+  
+  $node = new stdClass(); // We create a new node object
+  $node->type = "webform_component";  
+  $node->title = $component->name;
+  $node->language = LANGUAGE_NONE; 
+  $node->uid = $user->uid; 
+  $node->status = 1;
+  $node->component_type[$node->language][] = array('value' => $component->type);
+  if ($tagIds) {
+    foreach ($tagIds as $tagId) {
+      $node->component_tags[$node->language][] = array('tid' => $tagId); 
+    }
+  }
+  node_object_prepare($node);  
+  $node = node_submit($node);  
+  node_save($node); 
+  if ($node) {
+    webform_component_entities_save_entity($node->nid, $component);
+  }
+}
+
+/**
+ * load component information from webform
+ * @param int $nid node id
+ * @param int $cid component id
+ * @return object of component
+ */
+function webform_component_entities_load_webform_component($nid, $cid) {
+
+  $query = db_select('webform_component', 'cp')
+  ->fields('cp')
+  ->condition('nid', $nid)
+  ->condition('cid', $cid)
+  ->range(0,1);
+  
+  $result = $query->execute();
+  foreach ($result as $component) {
+    return $component;
+  }
+  return NULL;
+}
+
+
+/**
+ * load entity component
+ * @param int $nid node id
+ * @return object of component
+ */
+function webform_component_entities_load_entity_component($nid) {
+
+  $query = db_select('webform_component_entity', 'ce')
+  ->fields('ce')
+  ->condition('nid', $nid)
+  ->range(0,1);
+  
+  $result = $query->execute();
+  foreach ($result as $component) {
+    return $component;
+  }
+  return NULL;
+}
+
+/**
+ * insert to table webform_component_entity
+ * @param int $nid node id
+ * @param object $component component object
+ * @return boolean
+ */
+function webform_component_entities_save_entity($nid, $component) {
+  
+  //check if record existed for $nid ->delete it
+  $count_query = db_select('webform_component_entity', 'ce');
+  $count_query->addExpression('COUNT(*)', 'count');
+  $count_query->condition('nid', $nid) ;
+  $count = $count_query->execute()->fetchField();  
+  
+  if ($count) {
+     db_delete('webform_component_entity')
+        ->condition('nid', $nid)
+        ->execute(); 
+    
+  }
+  //insert new record
+  $result = db_insert('webform_component_entity')
+        ->fields(array(
+          'nid' => $nid,
+          'form_key' => $component->form_key,
+          'name' => $component->name,
+          'type' => $component->type,
+          'value' => $component->value,
+          'extra' => $component->extra,
+          'mandatory' => $component->mandatory,
+          'weight' => $component->weight,
+        ))
+        ->execute();
+  return $result;   
+}
+
+
+/**
+ * main function to copy component form entity component to webform component
+ * @param int $nid node id
+ * @param object $component component object
+ * @return boolean 
+ */
+function webform_component_entities_add_existing_component($nid, $component) {
+  
+  $node = node_load($nid);
+  if (!$node || $node->type != 'webform') {
+    return false;
+  }
+  $cid = 1;
+  if (lock_acquire('webform_component_insert_' . $nid, 5)) {
+    $next_id_query = db_select('webform_component')->condition('nid', $nid);
+    $next_id_query->addExpression('MAX(cid) + 1', 'cid');
+    $cid = $next_id_query->execute()->fetchField();
+    if ($cid == NULL) {
+      $cid = 1;
+    }
+    lock_release('webform_component_insert_' . $nid);
+  }
+  else {
+    watchdog('webform', 'A Webform component could not be saved because a timeout occurred while trying to acquire a lock for the node. Details: <pre>@component</pre>', array('@component' => print_r($component, TRUE)));
+    return FALSE;
+  } 
+  
+  //insert new record
+  $result = db_insert('webform_component')
+        ->fields(array(
+          'nid' => $node->nid,
+          'cid' => $cid,
+          'form_key' => $component->form_key,
+          'name' => $component->name,
+          'type' => $component->type,
+          'value' => $component->value,
+          'extra' => $component->extra,
+          'mandatory' => $component->mandatory,
+          'weight' => $component->weight,
+        ))
+        ->execute();
+  return $result;
+}
+
+/**
+ * Implements hook_node_load() to attache component to component entity
+ */
+function webform_component_entities_node_load($nodes, $types) {
+  
+  foreach ($nodes as $node) {
+		if($node->type == 'webform_component') {
+			$nodes[$node->nid]->component = webform_component_entities_load_entity_component($node->nid);
+		}
+	}
+
+}
+
+/**
+ * Implements hook_node_delete() to delete associated component data;
+ */
+function webform_component_entities_node_delete($node) {
+  if ($node->type == 'webform_component') {
+    db_delete('webform_component_entity') 
+    ->condition('nid', $node->nid)
+    ->execute();
+  }
+}
+/**
+ * Submit handler for webform_components_form() that adds a new components from library.
+ */
+function webform_component_entities_add_from_library_submit($form, &$form_state) {
+  $view_path = variable_get('webform_entity_view_path', 'component-library') ;
+  if ($view_path != '') {
+    $nid = $form_state['values']['nid'];
+    //drupal_goto($view_path, array('query'=> array('nid' => $nid )));
+    drupal_goto($view_path .'/'.$nid);
+  }
+}
+
+/**
+ * Implementation of hook_action_info(). to provide action in view_bulk_operation
+ */
+function webform_component_entities_action_info() {
+  return array(
+    'webform_component_entities_action' => array(
+      'label' => t('Add existing component to webform'),
+      'type' => 'node',
+      'aggregate' => TRUE,
+      'configurable' => FALSE,
+      'hooks' => array(),
+      'triggers' => array('any'),
+    ),
+  );
+}
+
+/**
+* Implementation of a Drupal action.
+*/
+function webform_component_entities_action($entities, $context = array()) {
+  $nid = arg(1);
+  if ($entities && $nid) {
+    foreach ($entities as $entity) {
+      if ($entity->type == 'webform_component') {
+        webform_component_entities_add_existing_component($nid, $entity->component);
+      }
+    }
+    drupal_set_message('The selected component entity has been added!');
+    drupal_goto('node/'.$nid.'/webform');
+  }  
+}
+
+ 
